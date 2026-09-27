@@ -32,18 +32,18 @@ WHISPER_MODEL = "base"                # tiny | base | small | medium | large
 LANGUAGE      = "es"               # None = auto-detect, "es" = Spanish, "en" = English
 FONT_SIZE     = 100
 OUTLINE_WIDTH = 6
-Y_POSITION    = 0.60                  # 0.0 = top, 1.0 = bottom
+Y_POSITION    = 0.70                  # 0.0 = top, 1.0 = bottom
 
 # ── FONT SELECTION ────────────────────────────────────────────────────────────
 # Set the full path to any .ttf font file you want to use.
 # The script will automatically use the filename from the path.
-FONT_PATH = Path(r"C:\Users\User\Documents\video subtitles\fonts\static\OpenSans_Condensed-ExtraBold.ttf")
+FONT_PATH = Path(__file__).parent / "fonts" / "static" / "OpenSans_Condensed-ExtraBold.ttf"
 FONT_NAME = FONT_PATH.name   # derived automatically
 
 # ── TEXT CASE ─────────────────────────────────────────────────────────────────
 # Controls how words are displayed on screen.
 # Options: "upper" (ALL CAPS), "lower" (all lowercase), "original" (as Whisper heard it)
-TEXT_CASE = "upper"
+TEXT_CASE = "lower"
 # ─────────────────────────────────────────────────────────────────────────────
 
 # ── WORD-HIGHLIGHT CONFIG ─────────────────────────────────────────────────────
@@ -52,7 +52,7 @@ HIGHLIGHT_SIZE_MIN   = 1.2            # minimum scale factor vs FONT_SIZE
 HIGHLIGHT_SIZE_MAX   = 1.6            # maximum scale factor vs FONT_SIZE
 HIGHLIGHT_MAX_PCT    = 0.20           # maximum fraction of words that can be highlighted
 HIGHLIGHT_LONG_WORD = 7              # words longer than this keep their normal size
-PAUSE_THRESHOLD      = 0.18           # seconds gap after word → treat as sentence-end
+PAUSE_THRESHOLD      = 0.18           # seconds gap after word --> treat as sentence-end
 
 # ── SCRIPT CORRECTION CONFIG ──────────────────────────────────────────────────
 # If a .txt script is found for a video, Whisper words are compared to it.
@@ -97,7 +97,7 @@ STOP_WORDS = {
 def extract_audio(video_path: Path, tmp_dir: Path) -> Path:
     """Extract audio from video to a temporary WAV file."""
     audio_path = tmp_dir / (video_path.stem + "_audio.wav")
-    print(f"  Extracting audio → {audio_path.name}")
+    print(f"  Extracting audio --> {audio_path.name}")
     clip = VideoFileClip(str(video_path))
     clip.audio.write_audiofile(str(audio_path), logger=None)
     clip.close()
@@ -129,7 +129,7 @@ def transcribe_audio(audio_path: Path, model) -> list:
                     word = word.upper()
                 elif TEXT_CASE == "lower":
                     word = word.lower()
-                # "original" → keep as-is from Whisper
+                # "original" --> keep as-is from Whisper
                 timings.append((word, w["start"], w["end"]))
 
     print(f"  Found {len(timings)} words")
@@ -168,9 +168,9 @@ def load_script(video_path: Path) -> list:
 def correct_with_script(word_timings: list, script_words: list) -> list:
     """
     Align Whisper word timings with the voiceover script using difflib opcodes.
-    - 'replace' (equal length, ≤ MAX_CORRECTION_RUN): Whisper mishear → use script word
-    - 'delete': Whisper heard extra words not in script (ad-libs, camera talk) → keep
-    - 'insert': Script words Whisper missed entirely → nothing to do (no timing)
+    - 'replace' (equal length, ≤ MAX_CORRECTION_RUN): Whisper mishear --> use script word
+    - 'delete': Whisper heard extra words not in script (ad-libs, camera talk) --> keep
+    - 'insert': Script words Whisper missed entirely --> nothing to do (no timing)
     - Adjacent delete+insert pairs are merged into a replace when small enough,
       catching cases where difflib splits a substitution into two operations.
     Timings are never touched — only the displayed text changes.
@@ -233,8 +233,8 @@ def correct_with_script(word_timings: list, script_words: list) -> list:
 
     # Fuzzy pass: for every unmatched Whisper word, find the most similar
     # unmatched script word anywhere in the remaining pool.
-    # High similarity → Whisper mishear → correct it.
-    # Low similarity → extra audio (ad-lib) → keep Whisper word as-is.
+    # High similarity --> Whisper mishear --> correct it.
+    # Low similarity --> extra audio (ad-lib) --> keep Whisper word as-is.
     # Guard: only replace if the script word is MORE similar to the whisper word
     # than the whisper word already is (prevents replacing correct words with typos).
     FUZZY_THRESHOLD = 0.70
@@ -288,6 +288,7 @@ def mark_highlights(word_timings: list) -> list:
     Words longer than HIGHLIGHT_LONG_WORD letters are not scaled up.
     """
     n = len(word_timings)
+    print(f"  [DEBUG] mark_highlights: FONT_SIZE={FONT_SIZE}, n={n}")
 
     # First pass: score every word
     scored = []   # (score, index)
@@ -385,8 +386,25 @@ def _get_font(size: int) -> ImageFont.FreeTypeFont:
     return ImageFont.load_default()
 
 
+class _ProgressForwarder:
+    """Forwards moviepy/proglog's write_videofile progress (0-1) to a callback."""
+
+    def __init__(self, callback):
+        import proglog
+        self._callback = callback
+
+        class _Logger(proglog.ProgressBarLogger):
+            def bars_callback(_self, bar, attr, value, old_value=None):
+                total = _self.bars[bar].get("total")
+                index = _self.bars[bar].get("index")
+                if total:
+                    callback(index / total)
+
+        self.logger = _Logger()
+
+
 def burn_captions(video_path: Path, word_timings: list, output_path: Path,
-                  highlight_mode: bool = False):
+                  highlight_mode: bool = False, progress_callback=None):
     """
     Apply captions frame-by-frame via moviepy's transform(),
     then write with high-quality settings (CRF 18 = visually lossless).
@@ -398,7 +416,7 @@ def burn_captions(video_path: Path, word_timings: list, output_path: Path,
     fps = clip.fps
     video_w, video_h = clip.size
 
-    # Pre-build a lookup dict for O(1) frame access: end_time → entry
+    # Pre-build a lookup dict for O(1) frame access: end_time --> entry
     # We'll keep it as a sorted list and binary-search per frame.
     import bisect
     starts = [w[1] for w in word_timings]
@@ -431,6 +449,7 @@ def burn_captions(video_path: Path, word_timings: list, output_path: Path,
           f"(duration {clip.duration:.1f}s @ {fps:.0f}fps)…")
     captioned = clip.transform(add_caption, apply_to=["video"])
 
+    logger = _ProgressForwarder(progress_callback).logger if progress_callback else None
     captioned.write_videofile(
         str(output_path),
         codec="libx264",
@@ -438,26 +457,82 @@ def burn_captions(video_path: Path, word_timings: list, output_path: Path,
         fps=fps,
         preset="slow",
         threads=4,
-        logger=None,
+        logger=logger,
         ffmpeg_params=["-crf", "18"],
     )
 
     clip.close()
     captioned.close()
-    print(f"  ✓ Saved → {output_path.name}")
+    print(f"  ✓ Saved --> {output_path.name}")
 
 
-def process_folder(folder: Path, highlight_mode: bool = False):
-    video_files = sorted(folder.glob("*.mp4"))
+def transcribe_video(video_path: Path, whisper_model: str = None) -> list:
+    """Extract audio and transcribe a single video. Returns (word, start, end) tuples."""
+    global WHISPER_MODEL
+    if whisper_model:
+        WHISPER_MODEL = whisper_model
+    print(f"Loading Whisper model '{WHISPER_MODEL}'…")
+    model = whisper.load_model(WHISPER_MODEL)
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        audio_path = extract_audio(video_path, Path(tmp_dir))
+        return transcribe_audio(audio_path, model)
+
+
+def trim_video(video_path: Path, duration: float, output_path: Path) -> None:
+    """Re-encode the first `duration` seconds of a video (fast preset, for quick previews)."""
+    import subprocess
+    import imageio_ffmpeg
+    ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+    cmd = [
+        ffmpeg, "-y", "-i", str(video_path), "-t", str(duration),
+        "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", str(output_path),
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"Trim failed:\n{result.stderr}")
+
+
+def render_video(video_path: Path, word_timings: list, output_path: Path,
+                 highlight_mode: bool = False, progress_callback=None) -> None:
+    """Burn already-transcribed/edited word timings onto a video (no transcription)."""
+    timings = mark_highlights(word_timings) if highlight_mode else word_timings
+    _get_font(FONT_SIZE)
+    burn_captions(video_path, timings, output_path,
+                  highlight_mode=highlight_mode, progress_callback=progress_callback)
+
+
+def process_folder(folder: Path, highlight_mode: bool = False, save_transcripts_only: bool = False,
+                   font_size: int = None, highlight_color: str = None, whisper_model: str = None,
+                   single_file: Path = None, output_dir: Path = None,
+                   stage_callback=None, progress_callback=None):
+    global FONT_SIZE, HIGHLIGHT_COLOR, WHISPER_MODEL, SCRIPTS_FOLDER
+
+    # Override global variables with parameters if provided
+    if font_size is not None:
+        FONT_SIZE = font_size
+    if highlight_color is not None:
+        HIGHLIGHT_COLOR = highlight_color
+    if whisper_model is not None:
+        WHISPER_MODEL = whisper_model
+
+    video_files = [single_file] if single_file else sorted(folder.glob("*.mp4"))
     if not video_files:
         print(f"No .mp4 files found in {folder}")
         return
 
+    # Derive scripts folder from input folder (load_script() reads this global)
+    SCRIPTS_FOLDER = folder / "scripts"
+    scripts_folder = SCRIPTS_FOLDER
+    scripts_folder.mkdir(parents=True, exist_ok=True)
+
     suffix = OUTPUT_SUFFIX + ("_wh" if highlight_mode else "")
     mode_label = "WORD-HIGHLIGHT" if highlight_mode else "NORMAL"
+    stage = "TRANSCRIBE ONLY" if save_transcripts_only else mode_label
 
     print(f"Found {len(video_files)} video(s) in {folder}")
-    print(f"Mode: {mode_label}\n")
+    print(f"Mode: {stage}")
+    print(f"Font size: {FONT_SIZE}")
+    print(f"Highlight color: {HIGHLIGHT_COLOR}\n")
     print(f"Loading Whisper model '{WHISPER_MODEL}'…")
     model = whisper.load_model(WHISPER_MODEL)
 
@@ -476,37 +551,57 @@ def process_folder(folder: Path, highlight_mode: bool = False):
             if "_subtitled" in video_path.stem:
                 continue
 
-            output_path = folder / (video_path.stem + suffix + ".mp4")
+            script_path = scripts_folder / (video_path.stem + ".txt")
+            output_path = (output_dir or folder) / (video_path.stem + suffix + ".mp4")
 
             print("\n" + "=" * 60)
             print(f"VIDEO: {video_path.name}")
             print("=" * 60)
 
-            if output_path.exists():
-                print(f"  Output already exists, skipping ({output_path.name})")
-                continue
+            if save_transcripts_only:
+                if script_path.exists():
+                    print(f"  Transcript already exists ({script_path.name}), skipping")
+                    continue
+            else:
+                if output_path.exists():
+                    print(f"  Output already exists, skipping ({output_path.name})")
+                    continue
 
             try:
-                audio_path   = extract_audio(video_path, tmp_dir)
+                if stage_callback:
+                    stage_callback("Extrayendo audio...")
+                audio_path = extract_audio(video_path, tmp_dir)
+
+                if stage_callback:
+                    stage_callback("Transcribiendo con Whisper...")
                 word_timings = transcribe_audio(audio_path, model)
 
                 if not word_timings:
                     print("  No words detected — skipping.")
                     continue
 
-                # Correct with voiceover script if available
-                script_words = load_script(video_path)
-                if script_words:
-                    print(f"  Script found: {video_path.stem}.txt ({len(script_words)} words)")
-                    word_timings = correct_with_script(word_timings, script_words)
+                if save_transcripts_only:
+                    # Just save the raw transcription
+                    words_only = [word for word, _, _ in word_timings]
+                    script_path.write_text(" ".join(words_only), encoding="utf-8")
+                    print(f"  ✓ Transcript saved --> {script_path.name}")
                 else:
-                    print(f"  No script found in {SCRIPTS_FOLDER.name}/, using Whisper output as-is")
+                    # Correct with voiceover script if available
+                    script_words = load_script(video_path)
+                    if script_words:
+                        print(f"  Script found: {video_path.stem}.txt ({len(script_words)} words)")
+                        word_timings = correct_with_script(word_timings, script_words)
+                    else:
+                        print(f"  No script found in {scripts_folder.name}/, using Whisper output as-is")
 
-                if highlight_mode:
-                    word_timings = mark_highlights(word_timings)
+                    if highlight_mode:
+                        word_timings = mark_highlights(word_timings)
 
-                burn_captions(video_path, word_timings, output_path,
-                              highlight_mode=highlight_mode)
+                    if stage_callback:
+                        stage_callback("Renderizando subtítulos...")
+                    burn_captions(video_path, word_timings, output_path,
+                                  highlight_mode=highlight_mode,
+                                  progress_callback=progress_callback)
 
             except Exception as e:
                 print(f"  ERROR: {e}")
@@ -514,7 +609,12 @@ def process_folder(folder: Path, highlight_mode: bool = False):
                 traceback.print_exc()
 
     print("\n" + "=" * 60)
-    print("All done!")
+    if save_transcripts_only:
+        print("Transcription complete!")
+        print(f"Edit the .txt files in: {scripts_folder}")
+        print("Then run without --save-transcripts-only to burn captions.")
+    else:
+        print("All done!")
     print("=" * 60)
 
 
@@ -525,18 +625,34 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Add word-by-word captions to all videos in the input folder."
     )
+    parser.add_argument("--input", type=str, default=None,
+                        help="Input folder with .mp4 files (default: configured INPUT_FOLDER)")
     parser.add_argument("--wh", action="store_true",
-                        help="Word-highlight mode: important words in yellow at a larger size.")
+                        help="Word-highlight mode: important words highlighted.")
     parser.add_argument("--font", type=str, default=None,
                         help="Full path to a .ttf font file to use.")
     parser.add_argument("--case", choices=["upper", "lower", "original"], default=None,
                         help="Text case: upper (ALL CAPS), lower (all lowercase), original.")
+    parser.add_argument("--color", type=str, default=None,
+                        help="Highlight color (hex code, e.g. #4F2BC7)")
+    parser.add_argument("--model", type=str, default=None,
+                        help="Whisper model size: tiny | base | small | medium | large")
+    parser.add_argument("--font-size", type=int, default=None,
+                        help="Font size for captions (default: 100)")
+    parser.add_argument("--save-transcripts-only", action="store_true",
+                        help="Only transcribe and save .txt files (for manual review). Don't burn captions.")
     args = parser.parse_args()
 
     # CLI args override config variables
+    if args.input:
+        INPUT_FOLDER = Path(args.input)
     if args.font:
         FONT_PATH = Path(args.font)
     if args.case:
         TEXT_CASE = args.case
 
-    process_folder(INPUT_FOLDER, highlight_mode=args.wh or HIGHLIGHT_MODE)
+    process_folder(INPUT_FOLDER, highlight_mode=args.wh or HIGHLIGHT_MODE,
+                   save_transcripts_only=args.save_transcripts_only,
+                   font_size=args.font_size,
+                   highlight_color=args.color,
+                   whisper_model=args.model)
